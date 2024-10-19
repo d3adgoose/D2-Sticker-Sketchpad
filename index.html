@@ -1,15 +1,27 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-</head>
-<body>
-  <h1>Sticker Sketchpad</h1>
-  <canvas id="canvas" width="256" height="256"></canvas>
-  <button id="clearButton">Clear</button>
-  <button id="undoButton">Undo</button>
-  <button id="redoButton">Redo</button>
-  <script type="module" src="/src/main.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sticker Sketchpad</title>
+    <!-- Link to style.css correctly -->
+    <link rel="stylesheet" href="./src/style.css">
+  </head>
+  <body>
+    <div id="app">
+      <h1>Sticker Sketchpad</h1>
+      <canvas id="canvas" width="256" height="256"></canvas>
+      <div>
+        <button id="undo">Undo</button>
+        <button id="redo">Redo</button>
+        <button id="clear">Clear</button>
+        <button id="thin">Thin</button>
+        <button id="thick">Thick</button>
+      </div>
+    </div>
+    
+    <!-- Ensure main.js is loaded correctly as a module -->
+    <script type="module" src="./src/main.js"></script>
+  </body>
 </html>
+
