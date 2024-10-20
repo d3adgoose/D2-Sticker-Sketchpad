@@ -1,35 +1,94 @@
 import "./style.css";
 
-const APP_NAME = "Sticker Sketchpad";
-const app = document.querySelector<HTMLDivElement>("#app")!;
-document.title = APP_NAME;
+// Get the modal and export button elements
+const exportModal = document.getElementById("exportModal") as HTMLDivElement;
+const exportButton = document.getElementById("export") as HTMLButtonElement;
+const finalExportButton = document.getElementById("finalExport") as HTMLButtonElement;
+const closeModalButton = document.querySelector(".close") as HTMLSpanElement;
 
-// Add a title and canvas to the page
-const title = document.createElement("h1");
-title.textContent = APP_NAME;
-app.appendChild(title);
+// Open the modal when the export button is clicked
+exportButton.addEventListener("click", () => {
+  exportModal.style.display = "block";
+});
 
-const canvas = document.createElement("canvas");
-canvas.id = "canvas";
-canvas.width = 256;
-canvas.height = 256;
-app.appendChild(canvas);
+// Close the modal when the close button is clicked
+closeModalButton.addEventListener("click", () => {
+  exportModal.style.display = "none";
+});
 
+// Close the modal if the user clicks outside of the modal
+globalThis.addEventListener("click", (event) => {
+  if (event.target === exportModal) {
+    exportModal.style.display = "none";
+  }
+});
+
+// Function to export the canvas as an image
+function exportCanvas(backgroundColor: string) {
+  const canvas = document.getElementById("canvas") as HTMLCanvasElement;
+  const ctx = canvas.getContext("2d");
+
+  if (!ctx) return;
+
+  // Create a temporary canvas for export
+  const exportCanvas = document.createElement("canvas");
+  exportCanvas.width = canvas.width;
+  exportCanvas.height = canvas.height;
+  const exportCtx = exportCanvas.getContext("2d");
+
+  if (!exportCtx) return;
+
+  // If white background is selected, fill the background with white
+  if (backgroundColor === "white") {
+    exportCtx.fillStyle = "white";
+    exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+  }
+
+  // Draw the original canvas onto the export canvas
+  exportCtx.drawImage(canvas, 0, 0);
+
+  // Create an image link for download
+  const link = document.createElement("a");
+  link.download = "sticker_sketchpad.png";
+  link.href = exportCanvas.toDataURL();
+  link.click();
+}
+
+// Final export button logic
+finalExportButton.addEventListener("click", () => {
+  const selectedBackground = document.querySelector(
+    'input[name="bg-color"]:checked'
+  ) as HTMLInputElement;
+  const backgroundColor = selectedBackground.value;
+
+  // Export the canvas based on the selected background
+  exportCanvas(backgroundColor);
+
+  // Close the modal after export
+  exportModal.style.display = "none";
+});
+
+// Canvas Drawing Logic
+const canvas = document.getElementById("canvas") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 let isDrawing = false;
+let currentThickness = 3;
+let currentColor = "#000000";
+let currentEmoji: string | null = null;
+let currentRotation = 0; // Default rotation for emoji stickers
 
-// Default tool settings: line thickness and sticker
-let currentThickness = 2;
-let currentSticker: string | null = null;
+const emojis: string[] = ["😀", "🍕", "🌟", "🚀", "❤️"];
 
 // Command for drawing lines
-class MarkerLine {
+class InkLine {
   points: { x: number; y: number }[] = [];
   thickness: number;
+  color: string;
 
-  constructor(initialX: number, initialY: number, thickness: number) {
+  constructor(initialX: number, initialY: number, thickness: number, color: string) {
     this.points.push({ x: initialX, y: initialY });
     this.thickness = thickness;
+    this.color = color;
   }
 
   drag(x: number, y: number) {
@@ -41,6 +100,8 @@ class MarkerLine {
       ctx.beginPath();
       ctx.moveTo(this.points[0].x, this.points[0].y);
       ctx.lineWidth = this.thickness;
+      ctx.strokeStyle = this.color;
+      ctx.lineCap = "round";
       for (let i = 1; i < this.points.length; i++) {
         ctx.lineTo(this.points[i].x, this.points[i].y);
       }
@@ -49,16 +110,20 @@ class MarkerLine {
   }
 }
 
-// Command for placing stickers
-class StickerCommand {
-  sticker: string;
+// Command for placing emojis
+class EmojiCommand {
+  emoji: string;
   x: number;
   y: number;
+  fontSize: number;
+  rotation: number;
 
-  constructor(sticker: string, x: number, y: number) {
-    this.sticker = sticker;
+  constructor(emoji: string, x: number, y: number, fontSize: number, rotation: number) {
+    this.emoji = emoji;
     this.x = x;
     this.y = y;
+    this.fontSize = fontSize;
+    this.rotation = rotation;
   }
 
   drag(x: number, y: number) {
@@ -67,65 +132,97 @@ class StickerCommand {
   }
 
   draw(ctx: CanvasRenderingContext2D) {
-    ctx.font = "30px Arial";
-    ctx.fillText(this.sticker, this.x, this.y);
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate((this.rotation * Math.PI) / 180);
+    ctx.font = `${this.fontSize}px Arial`;
+    ctx.fillText(this.emoji, -this.fontSize / 2, this.fontSize / 2);
+    ctx.restore();
   }
 }
 
-// Array to store commands and redo stack
-const commands: (MarkerLine | StickerCommand)[] = [];
-const redoStack: (MarkerLine | StickerCommand)[] = [];
+const commands: (InkLine | EmojiCommand)[] = [];
+const redoStack: (InkLine | EmojiCommand)[] = [];
 
-// Tool preview object
-let toolPreview: ToolPreview | null = null;
-let currentLine: MarkerLine | null = null;
-let currentStickerCommand: StickerCommand | null = null;
+let cursorPreview: CursorPreview | null = null;
+let currentLine: InkLine | null = null;
+let currentEmojiCommand: EmojiCommand | null = null;
 
-// Tool preview: a small circle or sticker showing what will be drawn
-class ToolPreview {
+// Cursor preview object
+class CursorPreview {
   x: number;
   y: number;
-  thickness: number;
+  size: number;
+  color: string | null = null;
+  emoji: string | null = null;
+  rotation: number | null = null;
 
-  constructor(x: number, y: number, thickness: number) {
+  constructor(x: number, y: number, size: number, color: string | null = null, emoji: string | null = null, rotation: number | null = null) {
     this.x = x;
     this.y = y;
-    this.thickness = thickness;
+    this.size = size;
+    this.color = color;
+    this.emoji = emoji;
+    this.rotation = rotation;
   }
 
   draw(ctx: CanvasRenderingContext2D) {
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, this.thickness / 2, 0, 2 * Math.PI);
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = "gray";
-    ctx.stroke();
+    if (this.emoji) {
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      if (this.rotation) {
+        ctx.rotate((this.rotation * Math.PI) / 180);
+      }
+      ctx.font = `${this.size}px Arial`;
+      ctx.fillText(this.emoji, -this.size / 2, this.size / 2);
+      ctx.restore();
+    } else if (this.color) {
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.size / 2, 0, 2 * Math.PI);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = this.color;
+      ctx.stroke();
+    }
   }
 }
 
-// Mouse event to place stickers or start drawing lines
+// Helper function to generate a random color
+function getRandomColor() {
+  const letters = "0123456789ABCDEF";
+  let color = "#";
+  for (let i = 0; i < 6; i++) {
+    color += letters[Math.floor(Math.random() * 16)];
+  }
+  return color;
+}
+
+// Helper function to generate a random rotation angle (0 to 360 degrees)
+function getRandomRotation() {
+  return Math.floor(Math.random() * 361); // 0 to 360 degrees
+}
+
+// Mouse event to place emojis or start drawing lines
 canvas.addEventListener("mousedown", (e) => {
   const rect = canvas.getBoundingClientRect();
   const startX = e.clientX - rect.left;
   const startY = e.clientY - rect.top;
 
-  if (currentSticker) {
-    // Start placing the sticker
-    currentStickerCommand = new StickerCommand(currentSticker, startX, startY);
-    commands.push(currentStickerCommand);
+  if (currentEmoji) {
+    const emojiSize = currentThickness * 2 + 10;
+    currentEmojiCommand = new EmojiCommand(currentEmoji, startX, startY, emojiSize, currentRotation);
+    commands.push(currentEmojiCommand);
     redoStack.length = 0;
     canvas.dispatchEvent(new Event("drawing-changed"));
-    currentStickerCommand = null;
+    currentEmojiCommand = null;
   } else {
-    // Start drawing a line
     isDrawing = true;
-    currentLine = new MarkerLine(startX, startY, currentThickness);
+    currentLine = new InkLine(startX, startY, currentThickness, currentColor);
     redoStack.length = 0;
-    toolPreview = null;
+    cursorPreview = null;
     canvas.dispatchEvent(new Event("drawing-changed"));
   }
 });
 
-// Drag the sticker or line while moving the mouse
 canvas.addEventListener("mousemove", (e) => {
   const rect = canvas.getBoundingClientRect();
   const mouseX = e.clientX - rect.left;
@@ -134,18 +231,16 @@ canvas.addEventListener("mousemove", (e) => {
   if (isDrawing && currentLine) {
     currentLine.drag(mouseX, mouseY);
     canvas.dispatchEvent(new Event("drawing-changed"));
-  } else if (currentStickerCommand) {
-    // Drag the sticker
-    currentStickerCommand.drag(mouseX, mouseY);
+  } else if (currentEmojiCommand) {
+    currentEmojiCommand.drag(mouseX, mouseY);
     canvas.dispatchEvent(new Event("drawing-changed"));
   } else {
-    // Show the tool preview
-    toolPreview = new ToolPreview(mouseX, mouseY, currentThickness);
+    const previewSize = currentEmoji ? currentThickness * 2 + 10 : currentThickness;
+    cursorPreview = new CursorPreview(mouseX, mouseY, previewSize, currentColor, currentEmoji, currentRotation);
     canvas.dispatchEvent(new Event("tool-moved"));
   }
 });
 
-// Stop drawing when the mouse is released
 canvas.addEventListener("mouseup", () => {
   if (isDrawing && currentLine) {
     isDrawing = false;
@@ -155,84 +250,113 @@ canvas.addEventListener("mouseup", () => {
   }
 });
 
-// Clear and redraw the canvas when needed
 canvas.addEventListener("drawing-changed", () => {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  commands.forEach(command => command.draw(ctx));
+  commands.forEach((command) => command.draw(ctx));
 });
 
-// Draw tool preview when moving over the canvas
 canvas.addEventListener("tool-moved", () => {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  commands.forEach(command => command.draw(ctx));
-  if (toolPreview && !isDrawing) {
-    toolPreview.draw(ctx);
+  commands.forEach((command) => command.draw(ctx));
+  if (cursorPreview && !isDrawing) {
+    cursorPreview.draw(ctx);
   }
 });
 
-// Button setup for thickness and stickers
-const thinButton = document.createElement("button");
-thinButton.textContent = "Thin";
-app.appendChild(thinButton);
+// Button setup for thickness and emojis
+const toolContainer = document.createElement("div");
+toolContainer.classList.add("tools");
+document.getElementById("app")!.appendChild(toolContainer);
 
-const thickButton = document.createElement("button");
-thickButton.textContent = "Thick";
-app.appendChild(thickButton);
+// Function to create a tool button
+function createToolButton(label: string, onClick: () => void) {
+  const button = document.createElement("button");
+  button.textContent = label;
+  button.classList.add("tool-button");
+  button.addEventListener("click", onClick);
+  toolContainer.appendChild(button);
+  return button;
+}
 
-thinButton.addEventListener("click", () => {
-  currentThickness = 2;
-  currentSticker = null;
+// Function to update the selected tool's styling
+function updateToolSelection(selectedButton: HTMLElement) {
+  document.querySelectorAll(".tool-button").forEach((button) => button.classList.remove("selected"));
+  selectedButton.classList.add("selected");
+}
+
+const thinButton = createToolButton("Thin Line", () => {
+  currentThickness = 3;
+  currentEmoji = null;
+  currentColor = getRandomColor();
+  updateToolSelection(thinButton);
 });
 
-thickButton.addEventListener("click", () => {
-  currentThickness = 5;
-  currentSticker = null;
+const thickButton = createToolButton("Thick Line", () => {
+  currentThickness = 8;
+  currentEmoji = null;
+  currentColor = getRandomColor();
+  updateToolSelection(thickButton);
 });
 
-// Sticker buttons
-const stickers = ["😀", "🍕", "🌟"];
-stickers.forEach(sticker => {
-  const stickerButton = document.createElement("button");
-  stickerButton.textContent = sticker;
-  stickerButton.addEventListener("click", () => {
-    currentSticker = sticker;
-    canvas.dispatchEvent(new Event("tool-moved"));
+updateToolSelection(thinButton);
+
+function renderEmojiButtons() {
+  const existingEmojiButtons = document.querySelectorAll(".emoji-button");
+  existingEmojiButtons.forEach((button) => button.remove());
+
+  emojis.forEach((sticker) => {
+    const emojiButton = document.createElement("button");
+    emojiButton.textContent = sticker;
+    emojiButton.classList.add("tool-button", "emoji-button");
+    emojiButton.addEventListener("click", () => {
+      currentEmoji = sticker;
+      currentRotation = getRandomRotation();
+      updateToolSelection(emojiButton);
+      canvas.dispatchEvent(new Event("tool-moved"));
+    });
+    toolContainer.appendChild(emojiButton);
   });
-  app.appendChild(stickerButton);
+}
+
+renderEmojiButtons();
+
+const _customEmojiButton = createToolButton("Add Emoji", () => {
+  const customEmoji = prompt("Enter your custom emoji:", "🙂");
+  if (customEmoji) {
+    emojis.push(customEmoji);
+    renderEmojiButtons();
+  }
 });
 
-// Undo, Redo, Clear buttons
-const undoButton = document.createElement("button");
-undoButton.textContent = "Undo";
-app.appendChild(undoButton);
+const actionContainer = document.createElement("div");
+actionContainer.classList.add("actions");
+document.getElementById("app")!.appendChild(actionContainer);
 
-const redoButton = document.createElement("button");
-redoButton.textContent = "Redo";
-app.appendChild(redoButton);
+function createActionButton(label: string, onClick: () => void) {
+  const button = document.createElement("button");
+  button.textContent = label;
+  button.classList.add("action-button");
+  button.addEventListener("click", onClick);
+  actionContainer.appendChild(button);
+  return button;
+}
 
-const clearButton = document.createElement("button");
-clearButton.textContent = "Clear";
-app.appendChild(clearButton);
-
-// Undo/Redo functionality
-undoButton.addEventListener("click", () => {
+const _undoButton = createActionButton("Undo", () => {
   if (commands.length > 0) {
     redoStack.push(commands.pop()!);
     canvas.dispatchEvent(new Event("drawing-changed"));
   }
 });
 
-redoButton.addEventListener("click", () => {
+const _redoButton = createActionButton("Redo", () => {
   if (redoStack.length > 0) {
     commands.push(redoStack.pop()!);
     canvas.dispatchEvent(new Event("drawing-changed"));
   }
 });
 
-// Clear the canvas
-clearButton.addEventListener("click", () => {
+const _clearButton = createActionButton("Clear", () => {
   commands.length = 0;
   redoStack.length = 0;
   canvas.dispatchEvent(new Event("drawing-changed"));
 });
-
