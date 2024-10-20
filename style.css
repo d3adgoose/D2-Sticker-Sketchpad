@@ -119,3 +119,7 @@ button {
   background-color: #c7acf2;
   cursor: pointer;
 }
+
+.tool {
+  margin: 5px;
+}

@@ -2,15 +2,13 @@ import "./style.css";
 
 const APP_NAME = "Sticker Sketchpad";
 const app = document.querySelector<HTMLDivElement>("#app")!;
-
 document.title = APP_NAME;
 
-// Create and add title to the app
+// Add a title and canvas to the page
 const title = document.createElement("h1");
 title.textContent = APP_NAME;
 app.appendChild(title);
 
-// Create and add canvas to the app
 const canvas = document.createElement("canvas");
 canvas.id = "canvas";
 canvas.width = 256;
@@ -20,113 +18,221 @@ app.appendChild(canvas);
 const ctx = canvas.getContext("2d")!;
 let isDrawing = false;
 
-// Array to store lines (each line is an array of points)
-const lines: { x: number; y: number }[][] = [];
-let currentLine: { x: number; y: number }[] = [];
+// Default tool settings: line thickness and sticker
+let currentThickness = 2;
+let currentSticker: string | null = null;
 
-// Array to store lines for redo functionality
-const redoStack: { x: number; y: number }[][] = [];
+// Command for drawing lines
+class MarkerLine {
+  points: { x: number; y: number }[] = [];
+  thickness: number;
 
-// Event listener to start drawing on mousedown
-canvas.addEventListener("mousedown", (e) => {
-  isDrawing = true;
-  currentLine = [];
-  addPoint(e);
-  redoStack.length = 0; // Clear the redo stack when a new drawing starts
-});
-
-// Event listener to save points on mousemove
-canvas.addEventListener("mousemove", (e) => {
-  if (isDrawing) {
-    addPoint(e);
-    canvas.dispatchEvent(new Event("drawing-changed"));
+  constructor(initialX: number, initialY: number, thickness: number) {
+    this.points.push({ x: initialX, y: initialY });
+    this.thickness = thickness;
   }
-});
 
-// Event listener to stop drawing on mouseup
-canvas.addEventListener("mouseup", () => {
-  if (isDrawing) {
-    isDrawing = false;
-    lines.push(currentLine);
-    canvas.dispatchEvent(new Event("drawing-changed"));
+  drag(x: number, y: number) {
+    this.points.push({ x, y });
   }
-});
 
-// Event listener to stop drawing if mouse leaves the canvas
-canvas.addEventListener("mouseout", () => {
-  if (isDrawing) {
-    isDrawing = false;
-    lines.push(currentLine);
-    canvas.dispatchEvent(new Event("drawing-changed"));
-  }
-});
-
-// Function to add a point to the current line
-function addPoint(e: MouseEvent) {
-  const rect = canvas.getBoundingClientRect();
-  currentLine.push({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-}
-
-// Observer for "drawing-changed" to clear and redraw the canvas
-canvas.addEventListener("drawing-changed", () => {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawLines();
-});
-
-// Function to redraw the saved lines
-function drawLines() {
-  for (const line of lines) {
-    if (line.length > 0) {
+  draw(ctx: CanvasRenderingContext2D) {
+    if (this.points.length > 1) {
       ctx.beginPath();
-      ctx.moveTo(line[0].x, line[0].y);
-      for (const point of line) {
-        ctx.lineTo(point.x, point.y);
+      ctx.moveTo(this.points[0].x, this.points[0].y);
+      ctx.lineWidth = this.thickness;
+      for (let i = 1; i < this.points.length; i++) {
+        ctx.lineTo(this.points[i].x, this.points[i].y);
       }
       ctx.stroke();
     }
   }
 }
 
-// Create and add the undo button
+// Command for placing stickers
+class StickerCommand {
+  sticker: string;
+  x: number;
+  y: number;
+
+  constructor(sticker: string, x: number, y: number) {
+    this.sticker = sticker;
+    this.x = x;
+    this.y = y;
+  }
+
+  drag(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+
+  draw(ctx: CanvasRenderingContext2D) {
+    ctx.font = "30px Arial";
+    ctx.fillText(this.sticker, this.x, this.y);
+  }
+}
+
+// Array to store commands and redo stack
+const commands: (MarkerLine | StickerCommand)[] = [];
+const redoStack: (MarkerLine | StickerCommand)[] = [];
+
+// Tool preview object
+let toolPreview: ToolPreview | null = null;
+let currentLine: MarkerLine | null = null;
+let currentStickerCommand: StickerCommand | null = null;
+
+// Tool preview: a small circle or sticker showing what will be drawn
+class ToolPreview {
+  x: number;
+  y: number;
+  thickness: number;
+
+  constructor(x: number, y: number, thickness: number) {
+    this.x = x;
+    this.y = y;
+    this.thickness = thickness;
+  }
+
+  draw(ctx: CanvasRenderingContext2D) {
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.thickness / 2, 0, 2 * Math.PI);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "gray";
+    ctx.stroke();
+  }
+}
+
+// Mouse event to place stickers or start drawing lines
+canvas.addEventListener("mousedown", (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const startX = e.clientX - rect.left;
+  const startY = e.clientY - rect.top;
+
+  if (currentSticker) {
+    // Start placing the sticker
+    currentStickerCommand = new StickerCommand(currentSticker, startX, startY);
+    commands.push(currentStickerCommand);
+    redoStack.length = 0;
+    canvas.dispatchEvent(new Event("drawing-changed"));
+    currentStickerCommand = null;
+  } else {
+    // Start drawing a line
+    isDrawing = true;
+    currentLine = new MarkerLine(startX, startY, currentThickness);
+    redoStack.length = 0;
+    toolPreview = null;
+    canvas.dispatchEvent(new Event("drawing-changed"));
+  }
+});
+
+// Drag the sticker or line while moving the mouse
+canvas.addEventListener("mousemove", (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mouseX = e.clientX - rect.left;
+  const mouseY = e.clientY - rect.top;
+
+  if (isDrawing && currentLine) {
+    currentLine.drag(mouseX, mouseY);
+    canvas.dispatchEvent(new Event("drawing-changed"));
+  } else if (currentStickerCommand) {
+    // Drag the sticker
+    currentStickerCommand.drag(mouseX, mouseY);
+    canvas.dispatchEvent(new Event("drawing-changed"));
+  } else {
+    // Show the tool preview
+    toolPreview = new ToolPreview(mouseX, mouseY, currentThickness);
+    canvas.dispatchEvent(new Event("tool-moved"));
+  }
+});
+
+// Stop drawing when the mouse is released
+canvas.addEventListener("mouseup", () => {
+  if (isDrawing && currentLine) {
+    isDrawing = false;
+    commands.push(currentLine);
+    currentLine = null;
+    canvas.dispatchEvent(new Event("drawing-changed"));
+  }
+});
+
+// Clear and redraw the canvas when needed
+canvas.addEventListener("drawing-changed", () => {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  commands.forEach(command => command.draw(ctx));
+});
+
+// Draw tool preview when moving over the canvas
+canvas.addEventListener("tool-moved", () => {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  commands.forEach(command => command.draw(ctx));
+  if (toolPreview && !isDrawing) {
+    toolPreview.draw(ctx);
+  }
+});
+
+// Button setup for thickness and stickers
+const thinButton = document.createElement("button");
+thinButton.textContent = "Thin";
+app.appendChild(thinButton);
+
+const thickButton = document.createElement("button");
+thickButton.textContent = "Thick";
+app.appendChild(thickButton);
+
+thinButton.addEventListener("click", () => {
+  currentThickness = 2;
+  currentSticker = null;
+});
+
+thickButton.addEventListener("click", () => {
+  currentThickness = 5;
+  currentSticker = null;
+});
+
+// Sticker buttons
+const stickers = ["😀", "🍕", "🌟"];
+stickers.forEach(sticker => {
+  const stickerButton = document.createElement("button");
+  stickerButton.textContent = sticker;
+  stickerButton.addEventListener("click", () => {
+    currentSticker = sticker;
+    canvas.dispatchEvent(new Event("tool-moved"));
+  });
+  app.appendChild(stickerButton);
+});
+
+// Undo, Redo, Clear buttons
 const undoButton = document.createElement("button");
 undoButton.textContent = "Undo";
 app.appendChild(undoButton);
 
-// Create and add the redo button
 const redoButton = document.createElement("button");
 redoButton.textContent = "Redo";
 app.appendChild(redoButton);
 
-// Create and add a clear button to the app
 const clearButton = document.createElement("button");
 clearButton.textContent = "Clear";
 app.appendChild(clearButton);
 
-// Undo the last drawn line
+// Undo/Redo functionality
 undoButton.addEventListener("click", () => {
-  if (lines.length > 0) {
-    const lastLine = lines.pop(); // Remove the last line
-    if (lastLine) {
-      redoStack.push(lastLine); // Add it to the redo stack
-      canvas.dispatchEvent(new Event("drawing-changed"));
-    }
+  if (commands.length > 0) {
+    redoStack.push(commands.pop()!);
+    canvas.dispatchEvent(new Event("drawing-changed"));
   }
 });
 
-// Redo the last undone line
 redoButton.addEventListener("click", () => {
   if (redoStack.length > 0) {
-    const redoLine = redoStack.pop(); // Take the last line from the redo stack
-    if (redoLine) {
-      lines.push(redoLine); // Add it back to the lines array
-      canvas.dispatchEvent(new Event("drawing-changed"));
-    }
+    commands.push(redoStack.pop()!);
+    canvas.dispatchEvent(new Event("drawing-changed"));
   }
 });
 
-// Clear the canvas and reset lines when the "Clear" button is clicked
+// Clear the canvas
 clearButton.addEventListener("click", () => {
-  lines.length = 0; // Clear the lines array
-  redoStack.length = 0; // Clear the redo stack
+  commands.length = 0;
+  redoStack.length = 0;
   canvas.dispatchEvent(new Event("drawing-changed"));
 });
+
